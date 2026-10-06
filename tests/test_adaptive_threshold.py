@@ -1,4 +1,3 @@
-import cv2
 import numpy as np
 import pytest
 
@@ -47,6 +46,30 @@ def test_invalid_block_size(block_size: int) -> None:
 def test_opencv_result_is_binary() -> None:
     image = np.arange(100, dtype=np.uint8).reshape(10, 10)
     result = adaptive_threshold_opencv(image, block_size=3, c=2)
-    assert cv2.countNonZero((result != 0).astype(np.uint8)) <= image.size
+
+    assert result.shape == image.shape
+    assert result.dtype == np.uint8
     assert set(np.unique(result)).issubset({0, 255})
 
+
+def test_native_matches_known_small_result() -> None:
+    image = np.array(
+        [
+            [10, 10, 10],
+            [10, 100, 10],
+            [10, 10, 10],
+        ],
+        dtype=np.uint8,
+    )
+
+    result = adaptive_threshold_native(image, block_size=3, c=0)
+
+    expected = np.array(
+        [
+            [0, 0, 0],
+            [0, 255, 0],
+            [0, 0, 0],
+        ],
+        dtype=np.uint8,
+    )
+    np.testing.assert_array_equal(result, expected)

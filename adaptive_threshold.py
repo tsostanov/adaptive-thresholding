@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import argparse
+from statistics import median
 import sys
 import time
 
@@ -37,22 +38,55 @@ def adaptive_threshold_native(
     if gray.ndim != 2 or gray.dtype != np.uint8:
         raise ValueError("gray must be a two-dimensional uint8 image")
 
+    height, width = gray.shape
     radius = block_size // 2
-    padded = np.pad(gray, radius, mode="edge").astype(np.uint64)
+    source = gray.tolist()
 
-    integral = np.pad(padded, ((1, 0), (1, 0)), mode="constant")
-    integral = integral.cumsum(axis=0).cumsum(axis=1)
+    # Repeat edge pixels so every source pixel has a full block_size x block_size
+    # neighbourhood, including pixels near the image boundary.
+    padded_rows = [
+        [row[0]] * radius + row + [row[-1]] * radius for row in source
+    ]
+    padded = (
+        [padded_rows[0][:] for _ in range(radius)]
+        + padded_rows
+        + [padded_rows[-1][:] for _ in range(radius)]
+    )
 
-    local_sum = (
-        integral[block_size:, block_size:]
-        - integral[:-block_size, block_size:]
-        - integral[block_size:, :-block_size]
-        + integral[:-block_size, :-block_size]
-    )
-    local_mean = local_sum / float(block_size * block_size)
-    return np.where(gray.astype(np.float64) > local_mean - c, 255, 0).astype(
-        np.uint8
-    )
+    padded_height = len(padded)
+    padded_width = len(padded[0])
+    integral = [
+        [0] * (padded_width + 1) for _ in range(padded_height + 1)
+    ]
+
+    # Build the summed-area table using ordinary Python loops. NumPy is used
+    # only to receive and return an image, not to perform the algorithm itself.
+    for y, row in enumerate(padded, start=1):
+        row_sum = 0
+        previous = integral[y - 1]
+        current = integral[y]
+        for x, value in enumerate(row, start=1):
+            row_sum += value
+            current[x] = previous[x] + row_sum
+
+    area = block_size * block_size
+    result = [[0] * width for _ in range(height)]
+    for y in range(height):
+        top = integral[y]
+        bottom = integral[y + block_size]
+        result_row = result[y]
+        source_row = source[y]
+        for x in range(width):
+            local_sum = (
+                bottom[x + block_size]
+                - top[x + block_size]
+                - bottom[x]
+                + top[x]
+            )
+            threshold = local_sum / area - c
+            result_row[x] = 255 if source_row[x] > threshold else 0
+
+    return np.asarray(result, dtype=np.uint8)
 
 
 def adaptive_threshold_opencv(
@@ -150,8 +184,8 @@ def run_benchmark(
         gray=gray,
         opencv=opencv_result,
         native=native_result,
-        opencv_ms=min(opencv_times),
-        native_ms=min(native_times),
+        opencv_ms=median(opencv_times),
+        native_ms=median(native_times),
     )
 
 
