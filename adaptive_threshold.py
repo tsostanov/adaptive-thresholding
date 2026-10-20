@@ -42,8 +42,8 @@ def adaptive_threshold_native(
     radius = block_size // 2
     source = gray.tolist()
 
-    # Repeat edge pixels so every source pixel has a full block_size x block_size
-    # neighbourhood, including pixels near the image boundary.
+    # Повторяем крайние пиксели, чтобы даже у границ изображения
+    # каждый пиксель имел полную окрестность block_size x block_size.
     padded_rows = [
         [row[0]] * radius + row + [row[-1]] * radius for row in source
     ]
@@ -55,18 +55,20 @@ def adaptive_threshold_native(
 
     padded_height = len(padded)
     padded_width = len(padded[0])
+    # Нулевая верхняя строка и левый столбец упрощают расчёт сумм у границ.
     integral = [
         [0] * (padded_width + 1) for _ in range(padded_height + 1)
     ]
 
-    # Build the summed-area table using ordinary Python loops. NumPy is used
-    # only to receive and return an image, not to perform the algorithm itself.
+    # Строим интегральное изображение обычными циклами Python.
+    # NumPy используется как формат входного и выходного изображения.
     for y, row in enumerate(padded, start=1):
         row_sum = 0
         previous = integral[y - 1]
         current = integral[y]
         for x, value in enumerate(row, start=1):
             row_sum += value
+            # Сумма области сверху плюс сумма текущей строки слева до x.
             current[x] = previous[x] + row_sum
 
     area = block_size * block_size
@@ -77,13 +79,17 @@ def adaptive_threshold_native(
         result_row = result[y]
         source_row = source[y]
         for x in range(width):
+            # Находим сумму окна по четырём значениям интегрального изображения.
+            # Убираем области сверху и слева, возвращаем их общее пересечение.
             local_sum = (
                 bottom[x + block_size]
                 - top[x + block_size]
                 - bottom[x]
                 + top[x]
             )
+            # Вычитаем c из локального среднего, сохраняя его дробную часть.
             threshold = local_sum / area - c
+            # Пиксель выше порога становится белым, остальные становятся чёрными.
             result_row[x] = 255 if source_row[x] > threshold else 0
 
     return np.asarray(result, dtype=np.uint8)
@@ -95,6 +101,7 @@ def adaptive_threshold_opencv(
     validate_parameters(block_size, c)
     if gray.ndim != 2 or gray.dtype != np.uint8:
         raise ValueError("gray must be a two-dimensional uint8 image")
+    # Готовый вариант адаптивной бинаризации по локальному среднему.
     return cv2.adaptiveThreshold(
         gray,
         255,
@@ -170,6 +177,7 @@ def run_benchmark(
     native_times: list[float] = []
     opencv_result = native_result = None
 
+    # Измеряем только обработку: загрузка и сохранение файлов выполняются отдельно.
     for _ in range(repeats):
         started = time.perf_counter()
         opencv_result = adaptive_threshold_opencv(gray, block_size, c)
@@ -180,6 +188,7 @@ def run_benchmark(
         native_times.append((time.perf_counter() - started) * 1000)
 
     assert opencv_result is not None and native_result is not None
+    # Медиана уменьшает влияние отдельных случайных скачков времени выполнения.
     return RunResult(
         gray=gray,
         opencv=opencv_result,
@@ -191,6 +200,7 @@ def run_benchmark(
 
 def save_results(result: RunResult, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
+    # На карте различий совпавшие пиксели чёрные, несовпавшие белые.
     difference = cv2.absdiff(result.opencv, result.native)
     cv2.imwrite(str(output_dir / "input.png"), result.gray)
     cv2.imwrite(str(output_dir / "opencv.png"), result.opencv)
